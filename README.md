@@ -82,21 +82,26 @@ Data path explorer output:
 
 ---
 
-### Phase 5: The Ceiling Breaker Directive (Breaking the 0.95011 Barrier)
+### Phase 5: Organic Ceiling Break (no anchor CSVs)
 
-The Epistemological Engine exhausted all traditional GBDT geometries through N00-N12. A comprehensive project audit (by a third-party reviewing model) uncovered that:
-1. **Era 1's exact-value `TargetEncoder` on ALL features** (the single biggest organic improvement: +0.0009 OOF) was never ported to Era 2.
-2. **RealMLP** (Era 1's best solo model at 0.95062 OOF) was never used in Era 2.
-3. **TabPFN v3** now supports 1M rows natively — N13's 5K-row bagging hack is obsolete.
-4. The 0.95238 score (N12) comes from copying a pre-existing CSV file, not organic ML.
+**Score taxonomy (mandatory):**
+- **Non-organic / probing:** Public LB **0.95238** from N12 (external CSV). Not organic.
+- **Organic Era 2 best (current):** N14v3 Public LB **0.95029** (OOF blend 0.95031). Beats N06.
+- **Organic Era 1 best logged:** v0.9 RealMLP+HGBC OOF **0.95065** (still the organic target to beat).
+- Prior organic: N06 LB 0.95011 | N14v2 LB 0.95002 | N15v4 LB 0.95027 (double-corrected TabPFN, see below).
 
-**Research Tools Installed:** `tavily-python` (user-local pip). Native `search_web` API used for all SOTA research. Firecrawl/crawl4ai deferred (require sudo for global install).
+**Mission (current):** Organically exceed **0.95065**. N14v3 proved TabPFN @ ~100K compact features is competitive (**0.94872** raw OOF) and a 0.28 blend with Numeric-TE GBDT lifts organic LB. N15v4 falsified prior-correction (see Double-Correction finding below). Next: N17 clean blend with searched weight + OOF-learned thresholds, folding in N16's solo-GBDT dilution test.
 
-**The Mission:** Deploy wholly novel architectures combining techniques from BOTH development eras to organically breach the 0.95011 ceiling without anchor files.
+**Research tooling (this machine):** `tavily-python` (user-local). `ripgrep` available. Global `sudo` installs for Firecrawl/crawl4ai blocked without password — use web search + docs fetch instead. Prefer absolute `model_path` to mounted Kaggle TabPFN-3 weights over `TABPFN_TOKEN`.
 
 | The Empirical Finding / Metric | The exact Script/Notebook name that birthed it | The analytical deduction: What this specifically rules out or forces us to do next |
 | :--- | :--- | :--- |
-| TabPFN Bagged Meta-Ensemble: Zero-shot transformer over 50 Bagged 5,000-row subsets. **OBSOLETE** — TabPFN v3 handles 1M rows natively. | `notebooks/N13: Tabular Foundation Models/n13-tabpfn-ensemble.ipynb` | (Rule 17 Invocation) Built for old TabPFN with 5K context limit. Superseded by N14/N15 which use TabPFN v3 natively. Never executed. |
-| The Ceiling Breaker: TabPFN v3 (full 690K rows) + sklearn TargetEncoder on ALL features (Era 1's v0.7 technique) + GBDT Ensemble (CatBoost+LightGBM+HGBC, 3 seeds) + diversity blend + pseudo-labeling. | `notebooks/N14: The Ceiling Breaker/n14-ceiling-breaker.ipynb` | (Rules 17+18 Invocation) First notebook to combine TabPFN v3 (native 1M-row support) with sklearn TargetEncoder on numeric features. Runs as an ablation: TabPFN solo vs GBDT solo vs optimal blend. Awaiting Kaggle GPU execution. |
-| The Novel Stacking Architecture: 3-family Level-1 (RealMLP + TabPFN v3 + GBDT Ensemble) → Level-2 LightGBM Meta-Learner with separate fold splits to prevent leakage. | `notebooks/N15: The Novel Stacking Architecture/n15-novel-stacking.ipynb` | (Rules 16+17+18 Invocation) First-ever combination of RealMLP (Era 1's best, NeurIPS 2024) + TabPFN v3 (2026 foundation model) + multi-GBDT. Three genuinely orthogonal model families in a proper stacking architecture. Awaiting Kaggle GPU execution. |
+| TabPFN Bagged Meta-Ensemble (10×5K/fold). **OOF 0.86067.** Kaggle comment: raw `argmax` under-predicts minorities on imbalance; prior-division helped their LGBM 0.878→0.949. | `n13-tabpfn-ensemble.ipynb` | 5K bags are still too weak even with that critique. Do not re-run N13 as a ceiling strategy. Prior-correction is now standard for TabPFN/RealMLP in N14v4+. |
+| N14v2: Numeric TE GBDT ensemble. **OOF=LB 0.95002.** TabPFN skipped (license). | `n14-ceiling-breaker.ipynb` | TE helps vs cat-only; 3×3 ensemble may dilute vs HGBC-solo. |
+| **N14v3 EXECUTED:** GBDT OOF 0.94997; TabPFN compact 100K OOF **0.94872** (no prior-corr); Blend α=0.28 OOF **0.95031**; PL 70/30; **Public LB 0.95029.** | `n14-ceiling-breaker.ipynb` | New Era 2 organic best. TabPFN is not dead — bagging was. Blend > either solo. Gap to v0.9 is **0.00036**. |
+| N14v4 / N15v4: prior-correction on TabPFN/RealMLP + clean newlines restored after a corrupted rebuild. | `n14…`, `n15…` | Re-upload only notebooks you have not already run successfully (see handoff note). |
+| **N15v4 EXECUTED — DOUBLE-CORRECTION FALSIFIED:** GBDT OOF 0.94996; RealMLP prior-corr OOF 0.94797; **TabPFN prior-corr OOF collapsed to 0.93302** (from N14v3's raw 0.94872, a **-0.0157** regression); blender set TabPFN weight to 0.0; Optimal Blend 0.94990; L2 Meta selected OOF **0.95019**; **Public LB 0.95029→0.95027** (-0.00002 vs N14v3). | `n15-novel-stacking.ipynb` | Prior-correction is **not** standard — it is the exact "Double Correction" trap already logged at N07: `balance_probabilities=True` (native) + manual `p /= class_priors` (added) stack destructively. Manual prior-division is retracted for any model already using `balance_probabilities=True`. N14v3 (0.95029) remains the Era-2 organic best. RealMLP (0.94797, ~5.8h/fold-set) is dropped going forward — below GBDT and too expensive for its marginal diversity. |
+| **N16 retired.** Its cheap value (solo-GBDT dilution test: does a single HGBC/CatBoost/LightGBM on Numeric TE beat the diluted 3x3 seed-ensemble, recovering Era-1 v0.7's 0.95020?) is folded into N17's existing GBDT loop at zero extra compute cost. Its RealMLP cell (unwanted, expensive) and TabPFN cell (same double-correction bug) are dropped. | `n16-solo-te-ablation.ipynb` (deleted) | Superseded by `n17-clean-ceiling.ipynb`. |
+| **N17 BUILT:** Clean blend = N14v3 recipe (GBDT Numeric-TE + raw `balance_probabilities`-only TabPFN, no manual prior-division) + folded-in N16 dilution logging + two new untested levers: searched blend weight (grid scan 0.0–0.6) and OOF-learned per-class decision thresholds (Nelder-Mead, guardrailed to reject if it doesn't improve OOF). | `n17-clean-ceiling.ipynb` | Awaiting execution. Also patched the same double-correction bug into N14 (now v5) so any future re-run of that notebook is valid. |
+| **Run order:** Do **not** re-upload N13, N14v3, N14v4, N15v4, or N16 (all already scored/retired). Upload and run **N17** next. | — | N17 is the only open notebook. |
 
