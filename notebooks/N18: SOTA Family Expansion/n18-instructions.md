@@ -1,69 +1,67 @@
-# N18: SOTA Family Expansion (TabICLv2 + TabM)
+# N18v2: SOTA Family Expansion (TabICLv2, disk-offload fix)
 
-## Why this notebook exists
-N17 ran to completion and scored **Public LB 0.95034** (OOF 0.95038) — the new organic best,
-confirming the double-correction fix and validating two new levers (searched blend weight,
-OOF-learned per-class thresholds). It also **rejected** the N16 dilution hypothesis: the 3x3
-GBDT seed-ensemble (0.94998) beat every solo learner, including HGBC-solo at 0.93491, which
-also discredits Era-1's "v0.7 HGBC-solo 0.95020" as a trustworthy number on this feature matrix.
+## Why v2 exists (N18v1 postmortem)
+N18v1 ran to completion but produced **no improvement** — Public LB ~0.95027, below N17's 0.95034
+— because both new families failed and the fusion fell back to N17's exact blend:
 
-An exhaustive SOTA research sweep (TabArena NeurIPS 2025, TabICL ICML 2025 / v2 Feb 2026,
-Chunked TabPFN, multiclass threshold-tuning literature) surfaced two never-tried, orthogonal
-model families:
+- **TabICL OOM'd and scored 0.** Error: `CPU memory allocation failed (CUDA out of memory) and
+  disk offload is not available. Please specify disk_offload_dir ... (estimated: 18995MB)`. With
+  `offload_mode="auto"` and no `disk_offload_dir`, the ~19GB column-wise embedding tensor for the
+  full 552K context had nowhere to spill. The OOM was also raised during predict, outside the
+  fit-only fallback, so the whole family was lost.
+- **TabM collapsed to 0.84240.** It was fed the raw target-encoded matrix with no feature scaling;
+  MLPs can't learn on unscaled TE columns.
 
-- **TabICLv2** — sees the **full 552K-row fold-train context**, not a 100K subsample. TabPFN's
-  compact matrix (`X_tab`) is reused as-is.
-- **TabM** — TabArena's #1-ranked model after post-hoc ensembling. Trained on the same
-  Numeric-TE matrix (`X_full`) used by GBDT, via a custom k=32 parameter-efficient MLP
-  ensemble (pure PyTorch, per Rule 10).
+The guardrail floor did its job (fell back to N17, no downside), but nothing new entered the blend.
 
-Both are added as **guarded** families: if either fails or underperforms, the N-way blend
-search assigns it near-zero weight and the notebook falls back to N17's proven blend as a
-guardrail floor. There is no downside beyond compute.
+## What changed in v2
+- **TabM dropped entirely.** Even correctly scaled, it would very likely land below GBDT (0.94998)
+  and add no blend value on this near-deterministic noised target (5th straight MLP-family
+  underperformance in this project). Removed from pip install, imports, family cell, and fusion.
+- **TabICL repaired** and kept as the one genuinely new full-context information source:
+  - `disk_offload_dir="/kaggle/working/tabicl_offload"` set so the big embedding tensor spills to
+    disk under `offload_mode="auto"`.
+  - the per-fold `try/except` now wraps **both fit and predict**, so any OOM triggers a
+    **150K-context fallback** (fits in memory, ~5GB, no disk needed) instead of losing the family.
+  - query batch reduced to `bs=8192`.
 
 ## Kaggle setup
 1. Attach competition data + model **`prior-labsai/tabpfn-3`**.
 2. Accelerator: **GPU T4 x2**.
-3. **Internet: ON.** This is new vs N17 — `pip install tabicl tabm` and their checkpoint
-   downloads require network access. If Internet is off, TabICL/TabM will fail their
-   import check and the notebook will print `TabICL skipped` / `TabM skipped` and gracefully
-   fall back to the N17 blend (GBDT + TabPFN only) — still a valid, if unchanged, run.
+3. **Internet: ON** (required for `pip install tabicl` and its checkpoint download). If Internet is
+   off, TabICL is skipped and the notebook falls back to the N17 blend (GBDT + TabPFN) — a valid
+   but unimproved run.
 4. Factory reset, Run All.
-5. Expect these prints near the top: `TabPFN checkpoint OK: ...`, `TabICL import OK`,
-   `TabM import OK`. If any says "unavailable", check Internet is ON and re-run the pip
-   install cell.
+5. Expect near the top: `TabPFN checkpoint OK: ...` and `TabICL import OK`.
 
 ## What each family should print
-- **Family A (GBDT)**: same as N17 — ensemble OOF, three solo OOFs, dilution verdict.
-- **Family B (TabPFN)**: should land at **~0.94872** again (exact match expected).
-- **Family D (TabICL)**: prints `context=<N>` per fold — should read ~441K-442K (80% of a
-  552K fold-train set) if the full-context fit succeeds. If it falls back to 200K, that means
-  the full-context fit hit an OOM/error; still a valid signal, just smaller than intended.
-- **Family E (TabM)**: prints a `BAcc=` per fold; training may take several epochs each with
-  early stopping (patience=8) — this is the slowest new family, budget ~45-90 min.
-- **Fusion**: prints the N17 guardrail floor OOF first, then the N-way blend OOF, then whether
-  the N-way blend was ACCEPTED or REJECTED relative to the floor.
+- **Family A (GBDT)**: ensemble OOF ~0.94998 + three solo OOFs + dilution verdict (REJECTED again).
+- **Family B (TabPFN)**: ~0.94872 again (deterministic given seeds).
+- **Family D (TabICL)**: per fold prints `BAcc=... (context=N)`. `context` should read ~442K
+  (80% of a 552K fold-train set) if the full-context fit succeeds. If it prints
+  `full-context failed (...); retry 150K context...` then `context=150000`, the fallback engaged —
+  still a valid signal, just a smaller context. If the whole family errors, it prints
+  `TabICL FAILED completely` and is excluded (result then == N17).
+- **Fusion**: prints the N17 guardrail floor OOF, then the N-way blend OOF, then ACCEPTED/REJECTED.
 
 ## Expected runtime
-GBDT (~1h) + TabPFN (~25min) + TabICL (~30-60min, full-context fit is slower than TabPFN's
-100K subsample but should still beat TabPFN's per-row cost per the paper's 10x speed claim) +
-TabM (~45-90min) + fusion/thresholds (seconds) + pseudo-label retrain (~15min) = roughly
-**3-3.5h total**, well within Kaggle's 12h GPU budget.
+GBDT (~1.1h) + TabPFN (~25min) + TabICL (full-context fit + disk-offloaded predict can be slow;
+budget ~1-2h, more if disk offload is heavily used) + fusion/thresholds (seconds) + PL retrain
+(~15min). Total roughly **2.5-3.5h**, within Kaggle's 12h.
 
-## What to record
-- Each family's OOF (GBDT ensemble + 3 solos, TabPFN, TabICL, TabM).
-- N-way blend weights and whether it was accepted over the N17 guardrail floor.
-- Learned per-class thresholds and whether accepted.
-- Final selected method + OOF, Public LB after submit.
-- Append findings to README Provenance Ledger and `results/output.txt`.
+## Watch for
+- If TabICL disk offload fills `/kaggle/working` (quota ~19-20GB), the full-context fit may still
+  fail; the 150K fallback avoids disk entirely (~5GB in memory) and should always succeed.
+- TabICL predict over a huge context is the slowest step; if a fold hangs far beyond the others,
+  the fallback path (smaller context) is the intended safety valve.
 
 ## Honest expectation
-If TabICL and/or TabM land OOF >= 0.949, the N-way blend has a realistic shot at pushing past
-N17's 0.95038 OOF toward 0.9505+. If both underperform, the guardrail floor holds and the
-result matches N17 (0.95038 OOF / 0.95034 LB) — confirming the 0.9503-0.9504 plateau is likely
-the true organic ceiling and justifying a pivot to Private LB robustness for the final week
-before the July 31 deadline.
+If TabICL lands OOF >= 0.949, the N-way blend + thresholds has a real shot at beating N17's 0.95038
+OOF. If it fails again or scores low, the result matches N17 (0.95034 LB) — no downside — and that
+is strong evidence the ~0.9503-0.9504 plateau is the true organic ceiling, at which point the
+sensible move before the July 31 deadline is to pivot to Private-LB robustness (seed-blending,
+variance reduction) rather than chase further public-LB gains.
 
 ## Reupload policy
-Do **not** re-upload N13, N14v3, N14v4, N15v4, N16 (retired), or N17 (all already scored).
-N18 is the only open notebook.
+Do **not** re-upload N13, N14v3, N14v4, N15v4, N16 (retired), N17, or N18v1 (all scored/superseded).
+N18v2 is the only open notebook.

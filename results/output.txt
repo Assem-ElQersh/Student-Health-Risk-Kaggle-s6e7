@@ -1,0 +1,162 @@
+# Results log — S6E7 Predicting Student Health Risk
+# Updated: 2026-07-21 (N18v1 executed; N18v2 built)
+
+## Organic leaderboard (project)
+- NON-ORGANIC: 0.95238 (N12 anchor CSV)
+- ORGANIC Era2 BEST: 0.95034 Public LB (N17) -- new best, beats N14v3
+- ORGANIC Era1 BEST logged: 0.95065 OOF (v0.9 RealMLP+HGBC) -- NO LONGER TRUSTED, see N17 HGBC-solo finding
+- N06: 0.95011 LB
+- N14v2: 0.95002 LB
+- N14v3: 0.95029 LB
+- N15v4: 0.95027 LB (double-corrected TabPFN; see diagnosis below)
+- N17: 0.95034 LB (double-correction fix confirmed + threshold lever) -- CURRENT BEST
+- N18v1: ~0.95027 LB (fell back to N17; both new families failed -- see below)
+
+## N13 bagged TabPFN
+- OOF: 0.86067
+- Commenter note: raw argmax on imbalanced target hurts BAcc; prior-division may help.
+- Still obsolete as primary strategy vs GBDT/N14 TabPFN@100K.
+
+## N14v3 (executed + submitted) — NEW ORGANIC BEST
+- GBDT NumericTE ensemble OOF: 0.94997
+  folds: 0.95070, 0.95206, 0.94897, 0.94949, 0.94864
+- TabPFN compact 100K (NO prior-corr) OOF: 0.94872
+  folds: 0.94923, 0.95046, 0.94836, 0.94782, 0.94772
+- Blend TabPFN=0.28 OOF: 0.95031
+- Pseudo-labels: 30104 (10.2%), 70/30 applied
+- Public LB: 0.95029
+- Delta vs N06: +0.00018
+- Delta vs v0.9 OOF target: -0.00036
+
+## N15v4 (executed + submitted) — DOUBLE-CORRECTION FALSIFIED
+- GBDT NumericTE ensemble OOF: 0.94996
+  folds: 0.95077, 0.95210, 0.94891, 0.94947, 0.94855
+- TabPFN prior-corr (balance_probabilities=True + manual /class_priors) OOF: 0.93302
+  folds: 0.93494, 0.92995, 0.93441, 0.93690, 0.92889
+- RealMLP prior-corr OOF: 0.94797  (folds: 0.94781, 0.94987, 0.94753, 0.94784, 0.94678; ~5.8h/5-fold)
+- Optimal Blend (Nelder-Mead over 3 families): 0.94990  weights {RealMLP: 0.415, TabPFN: 0.0, GBDT: 0.585}
+- Simple Avg: 0.94755
+- L2 Meta (selected): 0.95019
+- Pseudo-labels: 36667 (12.4%), 70/30 applied
+- Public LB: 0.95027  (vs N14v3 LB 0.95029: -0.00002)
+
+### Diagnosis: the Double-Correction trap
+TabPFN OOF collapsed from N14v3's raw 0.94872 (balance_probabilities=True only) to 0.93302
+(balance_probabilities=True + manual `proba /= class_priors`) — a -0.0157 regression. This is
+the exact trap logged at N07 ("Double Correction"): `balance_probabilities=True` already solves
+the log-loss vs balanced-accuracy divergence internally; a second manual division over-corrects
+toward minority classes and destroys calibration. The fusion Nelder-Mead search correctly detected
+this and assigned TabPFN a blend weight of 0.0 — TabPFN contributed nothing to the L2 Meta result.
+Net effect: prior-correction is a regression, not an improvement, whenever the base model already
+applies `balance_probabilities=True` (or an equivalent internal correction). See Rules.md Rule 21.
+
+### RealMLP verdict
+0.94797 OOF, below GBDT's 0.94996, at ~5.8h/5-fold cost (20907s in this run). Dropped from N17
+and future notebooks — the diversity did not translate into a solo or blend win worth the compute.
+
+## N16 — retired
+Solo-GBDT dilution test (HGBC/CatBoost/LightGBM-solo vs 3x3 seed-ensemble on Numeric TE) folded
+into N17's existing GBDT loop at zero extra compute (single-seed pass already computed per model).
+RealMLP and TabPFN cells (unwanted / same double-correction bug) dropped. n16-solo-te-ablation.ipynb
+and n16-instructions.md deleted.
+
+## N17 — built, awaiting execution
+`notebooks/N17: Clean Ceiling Blend/n17-clean-ceiling.ipynb`. Recipe: N14v3's clean blend (GBDT
+Numeric-TE + raw balance_probabilities-only TabPFN, NO manual prior-division) + folded-in N16
+dilution logging + two new levers:
+1. Searched blend weight: grid scan alpha in [0.0, 0.6] step 0.02 (vs N14v3's fixed alpha=0.28).
+2. OOF-learned per-class decision thresholds: Nelder-Mead on a 3-vector multiplier, guardrailed
+   to reject if it does not improve OOF balanced accuracy (N07 got +0.00006 on GBDT-solo; untested
+   on this Era-2 blend).
+Also patched the same double-correction bug into N14 (now v5) so it is valid if re-run.
+Expected upside: +0.0000 to +0.0004 over 0.95029. Not yet run on Kaggle.
+
+## N17 (executed + submitted) — NEW ORGANIC BEST, double-correction fix confirmed
+- GBDT 3x3 ensemble OOF: 0.94998
+  folds: 0.95078, 0.95222, 0.94895, 0.94943, 0.94854
+  solo CatBoost (seed=42) OOF: 0.94987
+  solo LightGBM (seed=42) OOF: 0.94708
+  solo HGBC (seed=42) OOF: 0.93491
+  Dilution check: best solo=CatBoost-solo (0.94987) vs ensemble (0.94998) -> ENSEMBLE WINS
+  N16 dilution hypothesis: REJECTED
+- TabPFN (balance_probabilities=True ONLY, no manual prior-division) OOF: 0.94872
+  folds: 0.94923, 0.95046, 0.94836, 0.94782, 0.94772
+  -- EXACT MATCH to N14v3's TabPFN OOF (fold-for-fold identical), confirming the double-correction
+     diagnosis: removing the manual division fully restores TabPFN's true performance.
+- Searched blend weight (grid 0.0-0.6 step 0.02): alpha=0.28 re-found as optimum, OOF 0.95031
+  (identical optimum to N14v3's manually-fixed alpha=0.28 -- the search validates the prior choice)
+- OOF-learned per-class thresholds (Nelder-Mead): [1.05769, 0.98475, 0.95756]
+  OOF with thresholds: 0.95038 (+0.00007 vs 0.95031 without) -- ACCEPTED by guardrail
+- Pseudo-labels: 30102 (10.2%), 70/30 applied
+- Public LB: 0.95034  (OOF->LB calibration gap: 0.00004, excellent)
+- Delta vs N14v3 LB (0.95029): +0.00005
+- Delta vs v0.9 OOF target (0.95065): -0.00027 (target itself now suspect, see below)
+
+### Finding: Era-1 "v0.7/v0.9" targets are no longer trustworthy comparators
+N17's HGBC-solo on the exact Numeric-TE matrix scored only 0.93491 OOF -- nowhere near the
+Era-1 "v0.7 HGBC-solo 0.95020" figure. Since the calibration gap on every Era-2 OOF->LB pair
+has been <=0.00005, and this HGBC-solo number is measured on the identical feature matrix,
+the Era-1 comparators (v0.7=0.95020, v0.9=0.95065) are either measured on a different feature
+matrix, a different validation scheme, or are stale/unreliable. Treat only Era-2 OOF-calibrated
+numbers (N14v3, N15v4, N17, and future) as ground truth going forward.
+
+## SOTA research sweep (2026-07-20)
+Exhaustive search across internal priors + web (TabArena NeurIPS 2025, TabICL ICML 2025/v2 2026,
+Chunked TabPFN arXiv 2509.00326, multiclass threshold-tuning arXiv 2511.21794, S6E7 community
+writeups) to find any viable organic lever beyond what's been tried:
+- TabArena (arXiv 2506.16791): GBDT-vs-DL is a false dichotomy; peak performance requires
+  post-hoc ensembling across model families. TabM ranks #1 after post-hoc ensembling (above
+  LightGBM, RealMLP, CatBoost). Validates our whole cross-family blend architecture.
+- TabICLv2 (soda-inria/tabicl, pip-installable, sklearn API): column-then-row attention,
+  handles 500K+ rows via CPU/disk offloading, beats TabPFNv2 AND CatBoost on >10K-row datasets.
+  This removes TabPFN's core handicap (100K subsample = only 14.5% of a 552K fold-train set).
+- TabM (yandex-research/tabm, pip-installable, pure PyTorch): parameter-efficient ensemble of
+  k=32 MLPs trained in parallel, satisfies Rule 10 (PyTorch-only for DL).
+- Multiclass threshold-tuning literature (GHOST, arXiv 2511.21794) confirms our Lever 2 is
+  state-of-practice; nothing structurally stronger exists for post-hoc calibration.
+- Community: a blog covering this exact S6E7 competition (Lukyanenko/Antigravity) peaked at
+  LB 0.94886 -- we are well ahead of published public approaches.
+Verdict: TabICLv2 and TabM are the two strongest untried orthogonal information sources.
+Built into N18 as guarded families.
+
+## N18v1 (executed + submitted) — NO IMPROVEMENT, fell back to N17
+- GBDT 3x3 ensemble OOF: 0.94998 (solo CatBoost 0.94988 / LightGBM 0.94706 / HGBC 0.93491;
+  dilution REJECTED again -- ensemble wins). Reproduces N17 fold-for-fold.
+- TabPFN OOF: 0.94872 (exact match to N17/N14v3 again -- fully deterministic given seeds).
+- TabICL: FAILED (scored 0). Error: "CPU memory allocation failed (CUDA out of memory) and disk
+  offload is not available. Please specify disk_offload_dir ... (estimated: 18995MB)". Root cause:
+  offload_mode="auto" with no disk_offload_dir cannot spill the ~19GB column-wise embedding tensor
+  for the full 552K context; the OOM was raised during predict, i.e. OUTSIDE the fit-only inner
+  try/except, so the outer catch set score_i=0 and the whole family was excluded.
+- TabM: OOF 0.84240 (folds ~0.840-0.845). Root cause: fed the raw target-encoded X_full with NO
+  feature scaling; MLPs cannot learn on unscaled TE columns. 5th straight MLP-family
+  underperformance on this target (N03 TEMLP 0.9476, N10 TabNet collapse, N15v4 RealMLP 0.94797).
+- Fusion: only {TabPFN 0.94872, GBDT 0.94998} passed the >0.90 gate, so the N-way blend == N17's
+  pairwise blend. Selected N-way[TabPFN, GBDT] +thresh + PL | OOF 0.95037 (thresholds [1.034,
+  1.023, 0.943] accepted, +0.00005). Public LB ~0.95027.
+- Verdict: guardrail floor worked (no downside), but zero new signal entered. Two implementation
+  bugs, not pipeline flaws. N17 (0.95034) remains the organic best.
+
+## N18v2 — built, awaiting execution (supersedes N18v1)
+`notebooks/N18: SOTA Family Expansion/n18-sota-families.ipynb`. Changes vs v1:
+- TabM DROPPED entirely (unusable here; even scaled it would land below GBDT and add no blend
+  value). pip install, imports, family cell, fusion + results references all removed.
+- TabICL REPAIRED:
+  * disk_offload_dir="/kaggle/working/tabicl_offload" set so the ~19GB embedding tensor can spill
+    to disk under offload_mode="auto".
+  * per-fold try/except now wraps BOTH fit and predict, so any OOM triggers a 150K-context
+    fallback (fits in memory, ~5GB, no disk needed) instead of losing the whole family.
+  * query batch reduced to bs=8192 to cap per-call memory.
+Expected: if TabICL lands >=0.949 OOF, N-way blend + thresholds may beat N17's 0.95038 OOF; if it
+fails again or scores low, result falls back to N17 (0.95034) with no downside -- and that would be
+strong evidence 0.9503-0.9504 is the true organic ceiling (pivot to private-LB robustness).
+
+## Reupload policy
+- N13: do not reupload
+- N14v3: already scored (0.95029 LB)
+- N14v4: superseded by v5 fix; do not reupload as-is
+- N15v4: already scored (0.95027 LB) -- confirmed the double-correction regression, do not re-run
+- N16: retired/deleted, do not reupload
+- N17: already scored (0.95034 LB) -- current organic best, do not re-run
+- N18v1: already scored (~0.95027 LB) -- both new families failed, superseded by v2, do not re-run
+- N18v2: upload and run next
